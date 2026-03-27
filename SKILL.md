@@ -8,12 +8,13 @@ description: |
 # 规则
 
 1. **只用下面的 python3 命令。禁止用 curl、wget、httpie 或任何其他方式。**
-2. 首次使用先运行初始化：`cd ~/.openclaw/skills/zhihu && bash scripts/setup.sh`
-3. 部分功能需要登录 Cookie，未登录时先引导用户导入 Cookie
+2. Skill 目录（`SKILL_DIR`）：`${CLAUDE_PLUGIN_ROOT}` 或 `~/.openclaw/skills/zhihu` 或 `~/.claude/skills/zhihu`，取实际存在的路径
+3. 首次使用先运行初始化：`cd <SKILL_DIR> && bash scripts/setup.sh`
+4. 部分功能需要登录 Cookie，未登录时先引导用户导入 Cookie
 
 # 命令
 
-以下是全部可用命令，`P` 代表 `python3 ~/.openclaw/skills/zhihu/scripts/zhihu_client.py`。
+以下是全部可用命令，`P` 代表 `python3 <SKILL_DIR>/scripts/zhihu_client.py`。
 
 ## 无需登录
 
@@ -45,20 +46,13 @@ description: |
 
 1. 用浏览器登录 zhihu.com
 2. 安装 Cookie-Editor 扩展，导出 JSON
-3. 保存到 `~/.openclaw/skills/zhihu/cookies.json`
+3. 保存到 `<SKILL_DIR>/cookies.json`
 
 # 示例
 
 ```shell
-# 看热榜（无需登录）
-python3 ~/.openclaw/skills/zhihu/scripts/zhihu_client.py hot
-
-# 热搜词（无需登录）
-python3 ~/.openclaw/skills/zhihu/scripts/zhihu_client.py hot-queries
-
-# 搜索（需登录）
-python3 ~/.openclaw/skills/zhihu/scripts/zhihu_client.py search "大模型"
-
-# 看某个用户（无需登录）
-python3 ~/.openclaw/skills/zhihu/scripts/zhihu_client.py user excited-vczh
+P hot
+P hot-queries
+P search "大模型"
+P user excited-vczh
 ```
