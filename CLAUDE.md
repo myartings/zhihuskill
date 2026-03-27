@@ -22,6 +22,9 @@
 
 - API Base: `https://www.zhihu.com/api/v4`
 - 必须带 User-Agent 和 Referer header，否则返回 403
+- 大部分 API 需要 `x-zse-96` 签名头（SM4 加密算法），已在客户端内置实现
+- `x-zse-96` 计算流程：`md5(x-zse-93 + url_path + d_c0)` → SM4 加密 → `"2.0_" + result`
+- `d_c0` cookie 如未提供会自动生成合成值
 - 搜索接口 `/search_v3` 的 `t` 参数控制类型：general/topic/people
 - 热榜有多个接口，优先用 `/v3/feed/topstory/hot-lists/total`
 - 回答/文章内容是 HTML 格式，需 strip tags

@@ -26,6 +26,8 @@ import os
 import json
 import re
 import html
+import hashlib
+import random
 import http.cookiejar
 import urllib.request
 import urllib.error
@@ -41,19 +43,170 @@ HEADERS = {
 }
 
 API_BASE = "https://www.zhihu.com/api/v4"
+ZSE_93 = "101_3_3.0"
+
+# ── x-zse-96 Signature (SM4-based) ────────────────────────────────────────
+
+_ZSE_INIT_STR = "6fpLRqJO8M/c3jnYxFkUVC4ZIG12SiH=5v0mXDazWBTsuw7QetbKdoPyAl+hN9rgE"
+_ZSE_ZK = [
+    1170614578, 1024848638, 1413669199, -343334464, -766094290, -1373058082,
+    -143119608, -297228157, 1933479194, -971186181, -406453910, 460404854,
+    -547427574, -1891326262, -1679095901, 2119585428, -2029270069, 2035090028,
+    -1521520070, -5587175, -77751101, -2094365853, -1243052806, 1579901135,
+    1321810770, 456816404, -1391643889, -229302305, 330002838, -788960546,
+    363569021, -1947871109,
+]
+_ZSE_ZB = [
+    20, 223, 245, 7, 248, 2, 194, 209, 87, 6, 227, 253, 240, 128, 222, 91,
+    237, 9, 125, 157, 230, 93, 252, 205, 90, 79, 144, 199, 159, 197, 186, 167,
+    39, 37, 156, 198, 38, 42, 43, 168, 217, 153, 15, 103, 80, 189, 71, 191,
+    97, 84, 247, 95, 36, 69, 14, 35, 12, 171, 28, 114, 178, 148, 86, 182,
+    32, 83, 158, 109, 22, 255, 94, 238, 151, 85, 77, 124, 254, 18, 4, 26,
+    123, 176, 232, 193, 131, 172, 143, 142, 150, 30, 10, 146, 162, 62, 224, 218,
+    196, 229, 1, 192, 213, 27, 110, 56, 231, 180, 138, 107, 242, 187, 54, 120,
+    19, 44, 117, 228, 215, 203, 53, 239, 251, 127, 81, 11, 133, 96, 204, 132,
+    41, 115, 73, 55, 249, 147, 102, 48, 122, 145, 106, 118, 74, 190, 29, 16,
+    174, 5, 177, 129, 63, 113, 99, 31, 161, 76, 246, 34, 211, 13, 60, 68,
+    207, 160, 65, 111, 82, 165, 67, 169, 225, 57, 112, 244, 155, 51, 236, 200,
+    233, 58, 61, 47, 100, 137, 185, 64, 17, 70, 234, 163, 219, 108, 170, 166,
+    59, 149, 52, 105, 24, 212, 78, 173, 45, 0, 116, 226, 119, 136, 206, 135,
+    175, 195, 25, 92, 121, 208, 126, 139, 3, 75, 141, 21, 130, 98, 241, 40,
+    154, 66, 184, 49, 181, 46, 243, 88, 101, 183, 8, 23, 72, 188, 104, 179,
+    210, 134, 250, 201, 164, 89, 216, 202, 220, 50, 221, 152, 140, 33, 235, 214,
+]
+_M = 0xFFFFFFFF
+
+
+def _u32(x):
+    return x & _M
+
+
+def _i32(x):
+    x = x & _M
+    return x - 0x100000000 if x >= 0x80000000 else x
+
+
+def _put_be32(val, buf, off):
+    buf[off] = (val >> 24) & 0xFF
+    buf[off + 1] = (val >> 16) & 0xFF
+    buf[off + 2] = (val >> 8) & 0xFF
+    buf[off + 3] = val & 0xFF
+
+
+def _get_be32(buf, off):
+    return ((buf[off] & 0xFF) << 24 | (buf[off + 1] & 0xFF) << 16 |
+            (buf[off + 2] & 0xFF) << 8 | (buf[off + 3] & 0xFF))
+
+
+def _rotl32(x, n):
+    x = _u32(x)
+    return _u32((x << n) | (x >> (32 - n)))
+
+
+def _sm4_g(e):
+    t = [0] * 4
+    _put_be32(_u32(e), t, 0)
+    n = [_ZSE_ZB[t[0]], _ZSE_ZB[t[1]], _ZSE_ZB[t[2]], _ZSE_ZB[t[3]]]
+    r = _get_be32(n, 0)
+    return _i32(r ^ _rotl32(r, 2) ^ _rotl32(r, 10) ^ _rotl32(r, 18) ^ _rotl32(r, 24))
+
+
+def _sm4_block(inp):
+    out = [0] * 16
+    n = [0] * 36
+    n[0] = _i32(_get_be32(inp, 0))
+    n[1] = _i32(_get_be32(inp, 4))
+    n[2] = _i32(_get_be32(inp, 8))
+    n[3] = _i32(_get_be32(inp, 12))
+    for r in range(32):
+        o = _sm4_g(_i32(n[r + 1] ^ n[r + 2] ^ n[r + 3] ^ _ZSE_ZK[r]))
+        n[r + 4] = _i32(n[r] ^ o)
+    _put_be32(_u32(n[35]), out, 0)
+    _put_be32(_u32(n[34]), out, 4)
+    _put_be32(_u32(n[33]), out, 8)
+    _put_be32(_u32(n[32]), out, 12)
+    return out
+
+
+def _sm4_cbc(data, iv):
+    result = []
+    for i in range(0, len(data), 16):
+        block = data[i:i + 16]
+        xored = [(block[j] ^ iv[j]) & 0xFF for j in range(16)]
+        iv = _sm4_block(xored)
+        result.extend(iv)
+    return result
+
+
+def _encode_first_block(block_16):
+    offset = [48, 53, 57, 48, 53, 51, 102, 55, 100, 49, 53, 101, 48, 49, 100, 55]
+    xored = [((block_16[i] ^ offset[i]) ^ 42) & 0xFF for i in range(16)]
+    return _sm4_block(xored)
+
+
+def _encode_triplet(ar):
+    b = ar[1] << 8
+    c = ar[0] | b
+    d = ar[2] << 16
+    e = c | d
+    result = [e & 63]
+    x6 = 6
+    while len(result) < 4:
+        result.append((e >> x6) & 63)
+        x6 += 6
+    return result
+
+
+def _compute_zse96(md5_hex):
+    """Compute x-zse-96 value from MD5 hex string."""
+    init_array = [ord(c) for c in md5_hex]
+    init_array.insert(0, 0)
+    init_array.insert(0, random.randint(0, 126))
+    while len(init_array) < 48:
+        init_array.append(14)
+
+    block0 = _encode_first_block(init_array[:16])
+    block_rest = _sm4_cbc(init_array[16:48], block0)
+    full = block0 + block_rest
+
+    for i in range(47, -1, -4):
+        full[i] ^= 58
+    full.reverse()
+
+    encoded = []
+    for j in range(3, len(full) + 1, 3):
+        encoded.extend(_encode_triplet(full[j - 3:j]))
+
+    return "".join(_ZSE_INIT_STR[idx] for idx in encoded)
+
+
+def sign_request(url_path, d_c0):
+    """Generate x-zse-96 header for a given API path and d_c0 cookie."""
+    plaintext = f"{ZSE_93}+{url_path}+{d_c0}"
+    md5_hex = hashlib.md5(plaintext.encode()).hexdigest()
+    encrypted = _compute_zse96(md5_hex)
+    return f"2.0_{encrypted}"
+
 
 # ── Cookie Management ───────────────────────────────────────────────────────
 
 _opener = None
+_d_c0 = None
 
 
-def get_opener():
-    """Get a URL opener with cookies loaded."""
-    global _opener
-    if _opener is not None:
-        return _opener
+def _generate_d_c0():
+    """Generate a synthetic d_c0 device cookie value."""
+    import string
+    import time
+    rand = "".join(random.choices(string.ascii_letters + string.digits, k=20))
+    return f'"A{rand}|{int(time.time())}"'
 
+
+def _load_cookies():
+    """Load cookies and extract d_c0 value. Auto-generate d_c0 if missing."""
+    global _opener, _d_c0
     cj = http.cookiejar.CookieJar()
+    _d_c0 = None
 
     if os.path.exists(COOKIE_FILE):
         try:
@@ -64,10 +217,14 @@ def get_opener():
                 domain = c.get("domain", "")
                 if "zhihu" not in domain:
                     continue
+                name = c.get("name", "")
+                value = c.get("value", "")
+                if name == "d_c0":
+                    _d_c0 = value
                 cookie = http.cookiejar.Cookie(
                     version=0,
-                    name=c.get("name", ""),
-                    value=c.get("value", ""),
+                    name=name,
+                    value=value,
                     port=None,
                     port_specified=False,
                     domain=domain,
@@ -86,29 +243,82 @@ def get_opener():
         except Exception as e:
             print(f"警告: 加载 cookies 失败: {e}", file=sys.stderr)
 
+    # Auto-generate d_c0 if not found in cookies
+    if not _d_c0:
+        _d_c0 = _generate_d_c0()
+        import time
+        dc_cookie = http.cookiejar.Cookie(
+            version=0, name="d_c0", value=_d_c0,
+            port=None, port_specified=False,
+            domain=".zhihu.com", domain_specified=True, domain_initial_dot=True,
+            path="/", path_specified=True,
+            secure=False, expires=int(time.time()) + 86400 * 365,
+            discard=False, comment=None, comment_url=None, rest={},
+        )
+        cj.set_cookie(dc_cookie)
+
     _opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+
+
+def get_opener():
+    """Get a URL opener with cookies loaded."""
+    global _opener
+    if _opener is None:
+        _load_cookies()
     return _opener
 
 
-def api(path, params=None, base=None):
-    url = (base or API_BASE) + path
-    if params:
-        url += "?" + urllib.parse.urlencode(params)
-    req = urllib.request.Request(url, headers=HEADERS)
+def get_d_c0():
+    """Get d_c0 cookie value (needed for API signing)."""
+    global _d_c0
+    if _opener is None:
+        _load_cookies()
+    return _d_c0
+
+
+def _do_request(url, headers):
+    """Make HTTP request and return parsed JSON or error dict."""
+    req = urllib.request.Request(url, headers=headers)
     try:
         opener = get_opener()
         with opener.open(req, timeout=15) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as e:
         body = e.read().decode()[:300]
-        code = e.code
-        if code == 401:
-            return {"error": f"需要登录。请运行: python3 {__file__} import-cookies"}
-        elif code == 403:
-            return {"error": f"无权访问 (403)。可能需要登录或 Cookie 已过期。"}
-        return {"error": f"HTTP {code}: {body}"}
+        return {"error": f"HTTP {e.code}: {body}", "_code": e.code}
     except Exception as e:
         return {"error": str(e)}
+
+
+def api(path, params=None, base=None):
+    url = (base or API_BASE) + path
+    if params:
+        url += "?" + urllib.parse.urlencode(params)
+
+    # Try without signing first (some endpoints work without it)
+    result = _do_request(url, HEADERS)
+    if "_code" not in result or result["_code"] != 403:
+        result.pop("_code", None)
+        return result
+
+    # 403 → retry with x-zse-96 signing
+    parsed = urllib.parse.urlparse(url)
+    url_path = parsed.path
+    if parsed.query:
+        url_path += "?" + parsed.query
+
+    d_c0 = get_d_c0()
+    headers = dict(HEADERS)
+    headers["x-zse-93"] = ZSE_93
+    headers["x-zse-96"] = sign_request(url_path, d_c0)
+
+    result = _do_request(url, headers)
+    code = result.pop("_code", None)
+    if code == 401:
+        return {"error": f"需要登录。请运行: python3 {__file__} import-cookies"}
+    elif code == 403:
+        return {"error": f"无权访问 (403)。请运行: python3 {__file__} import-cookies"}
+    return result
 
 
 def strip_html(text):
