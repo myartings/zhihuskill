@@ -173,7 +173,73 @@ def cmd_import_cookies():
 
 # ── Search ──────────────────────────────────────────────────────────────────
 
-def cmd_search(keyword):
+def _search_via_duckduckgo(keyword):
+    """Fallback: search zhihu content via DuckDuckGo (no login required)."""
+    query = urllib.parse.quote(f"{keyword} site:zhihu.com")
+    url = f"https://html.duckduckgo.com/html/?q={query}"
+    req = urllib.request.Request(url, headers={
+        "User-Agent": HEADERS["User-Agent"],
+        "Accept": "text/html",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            page = resp.read().decode("utf-8", errors="replace")
+    except Exception as e:
+        print(f"搜索失败: {e}")
+        return
+
+    # Extract results: links and titles
+    results = re.findall(
+        r'<a rel="nofollow" class="result__a" href="([^"]+)"[^>]*>(.*?)</a>',
+        page,
+    )
+    snippets = re.findall(
+        r'<a class="result__snippet"[^>]*>(.*?)</a>',
+        page,
+        re.DOTALL,
+    )
+
+    if not results:
+        print("未找到相关结果，请尝试其他关键词")
+        return
+
+    print(f"搜索「{keyword}」结果:\n")
+    count = 0
+    for i, (raw_link, raw_title) in enumerate(results):
+        title = strip_html(raw_title)
+        snippet = strip_html(snippets[i]) if i < len(snippets) else ""
+
+        # Extract real URL from DuckDuckGo redirect
+        m = re.search(r'uddg=([^&]+)', raw_link)
+        link = urllib.parse.unquote(m.group(1)) if m else raw_link
+
+        # Skip ads and non-zhihu results
+        if "zhihu.com" not in link:
+            continue
+
+        count += 1
+        if count > 15:
+            break
+
+        # Determine type from URL
+        if "zhuanlan.zhihu.com/p/" in link:
+            tag = "文章"
+        elif "/answer/" in link:
+            tag = "回答"
+        elif "/question/" in link:
+            tag = "问题"
+        else:
+            tag = "知乎"
+
+        print(f"{count}. [{tag}] {title}")
+        if snippet:
+            print(f"   {truncate(snippet, 150)}")
+        print(f"   {link}")
+        print()
+
+
+def _search_via_api(keyword):
+    """Search via Zhihu API (requires login cookie)."""
     r = api("/search_v3", {
         "t": "general",
         "q": keyword,
@@ -181,13 +247,12 @@ def cmd_search(keyword):
         "offset": 0,
         "limit": 10,
     })
-    if check_error(r):
-        return
+    if "error" in r:
+        return False
 
     data = r.get("data", [])
     if not data:
-        print("未找到相关结果，请尝试其他关键词")
-        return
+        return False
 
     print(f"搜索「{keyword}」结果:\n")
     count = 0
@@ -241,6 +306,14 @@ def cmd_search(keyword):
             if desc:
                 print(f"   {truncate(desc)}")
         print()
+    return True
+
+
+def cmd_search(keyword):
+    # Try Zhihu API first (if cookies available), fallback to DuckDuckGo
+    if os.path.exists(COOKIE_FILE) and _search_via_api(keyword):
+        return
+    _search_via_duckduckgo(keyword)
 
 
 # ── Hot List ────────────────────────────────────────────────────────────────
