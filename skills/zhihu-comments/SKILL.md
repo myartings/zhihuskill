@@ -8,7 +8,7 @@ description: |
 
 **只用下面的 python3 命令，禁止使用 curl 或其他方式。**
 
-`P` 代表 `python3 <SKILL_DIR>/scripts/zhihu_client.py`（SKILL_DIR：`${CLAUDE_PLUGIN_ROOT}` 或 `~/.openclaw/skills/zhihu` 或 `~/.claude/skills/zhihu`，取存在的路径）。
+`P` 代表 `python3 <SKILL_DIR>/scripts/zhihu_client.py`（SKILL_DIR：`~/.claude/skills/zhihu` 或 `~/.openclaw/skills/zhihu`，取存在的路径）。
 
 # 命令
 
