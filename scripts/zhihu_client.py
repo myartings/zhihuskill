@@ -383,8 +383,62 @@ def cmd_import_cookies():
 
 # ── Search ──────────────────────────────────────────────────────────────────
 
+def _search_via_sogou(keyword):
+    """Search zhihu content via Sogou Zhihu search."""
+    query = urllib.parse.urlencode({"query": keyword, "ie": "utf8"})
+    url = f"https://zhihu.sogou.com/zhihu?{query}"
+    req = urllib.request.Request(url, headers={
+        "User-Agent": HEADERS["User-Agent"],
+        "Accept": "text/html",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            page = resp.read().decode("utf-8", errors="replace")
+    except Exception as e:
+        print(f"搜索失败: {e}")
+        return False
+
+    # Extract titles from h3.vr-title > a
+    titles = re.findall(
+        r'<h3\s+class="vr-title[^"]*"[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>',
+        page, re.DOTALL,
+    )
+    # Extract real zhihu URLs from data-url attributes
+    data_urls = re.findall(r'data-url="(https?://[^"]+zhihu[^"]+)"', page)
+    # Extract snippets
+    snippet_blocks = re.findall(r'<p\s+class="[^"]*str-text[^"]*">(.*?)</p>', page, re.DOTALL)
+    if not snippet_blocks:
+        snippet_blocks = re.findall(r'<div\s+class="[^"]*txt-box[^"]*"[^>]*>.*?<p[^>]*>(.*?)</p>', page, re.DOTALL)
+
+    if not titles:
+        return False
+
+    print(f"搜索「{keyword}」结果:\n")
+    for i, (href, raw_title) in enumerate(titles[:15]):
+        title = strip_html(raw_title)
+        link = data_urls[i] if i < len(data_urls) else href
+        snippet = strip_html(snippet_blocks[i]) if i < len(snippet_blocks) else ""
+
+        if "zhuanlan.zhihu.com/p/" in link:
+            tag = "文章"
+        elif "/answer/" in link:
+            tag = "回答"
+        elif "/question/" in link:
+            tag = "问题"
+        else:
+            tag = "知乎"
+
+        print(f"{i + 1}. [{tag}] {title}")
+        if snippet:
+            print(f"   {truncate(snippet, 150)}")
+        print(f"   {link}")
+        print()
+    return True
+
+
 def _search_via_duckduckgo(keyword):
-    """Fallback: search zhihu content via DuckDuckGo (no login required)."""
+    """Fallback: search zhihu content via DuckDuckGo."""
     query = urllib.parse.quote(f"{keyword} site:zhihu.com")
     url = f"https://html.duckduckgo.com/html/?q={query}"
     req = urllib.request.Request(url, headers={
@@ -394,11 +448,9 @@ def _search_via_duckduckgo(keyword):
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             page = resp.read().decode("utf-8", errors="replace")
-    except Exception as e:
-        print(f"搜索失败: {e}")
-        return
+    except Exception:
+        return False
 
-    # Extract results: links and titles
     results = re.findall(
         r'<a rel="nofollow" class="result__a" href="([^"]+)"[^>]*>(.*?)</a>',
         page,
@@ -410,8 +462,7 @@ def _search_via_duckduckgo(keyword):
     )
 
     if not results:
-        print("未找到相关结果，请尝试其他关键词")
-        return
+        return False
 
     print(f"搜索「{keyword}」结果:\n")
     count = 0
@@ -419,11 +470,9 @@ def _search_via_duckduckgo(keyword):
         title = strip_html(raw_title)
         snippet = strip_html(snippets[i]) if i < len(snippets) else ""
 
-        # Extract real URL from DuckDuckGo redirect
         m = re.search(r'uddg=([^&]+)', raw_link)
         link = urllib.parse.unquote(m.group(1)) if m else raw_link
 
-        # Skip ads and non-zhihu results
         if "zhihu.com" not in link:
             continue
 
@@ -431,7 +480,6 @@ def _search_via_duckduckgo(keyword):
         if count > 15:
             break
 
-        # Determine type from URL
         if "zhuanlan.zhihu.com/p/" in link:
             tag = "文章"
         elif "/answer/" in link:
@@ -446,84 +494,16 @@ def _search_via_duckduckgo(keyword):
             print(f"   {truncate(snippet, 150)}")
         print(f"   {link}")
         print()
-
-
-def _search_via_api(keyword):
-    """Search via Zhihu API (requires login cookie)."""
-    r = api("/search_v3", {
-        "t": "general",
-        "q": keyword,
-        "correction": 1,
-        "offset": 0,
-        "limit": 10,
-    })
-    if "error" in r:
-        return False
-
-    data = r.get("data", [])
-    if not data:
-        return False
-
-    print(f"搜索「{keyword}」结果:\n")
-    count = 0
-    for item in data:
-        obj = item.get("object", {})
-        obj_type = obj.get("type", "")
-        highlight = item.get("highlight", {})
-
-        title = strip_html(highlight.get("title", "") or obj.get("title", "") or obj.get("name", ""))
-        desc = strip_html(highlight.get("description", "") or obj.get("excerpt", "") or obj.get("content", ""))
-
-        if not title and not desc:
-            continue
-
-        count += 1
-        if obj_type == "answer":
-            qid = obj.get("question", {}).get("id", "")
-            aid = obj.get("id", "")
-            author = obj.get("author", {}).get("name", "匿名")
-            voteup = obj.get("voteup_count", 0)
-            comment = obj.get("comment_count", 0)
-            q_title = strip_html(obj.get("question", {}).get("title", title))
-            print(f"{count}. [回答] {q_title}")
-            print(f"   {truncate(desc)}")
-            print(f"   作者: {author}  赞同: {voteup}  评论: {comment}")
-            print(f"   https://www.zhihu.com/question/{qid}/answer/{aid}")
-        elif obj_type == "article":
-            aid = obj.get("id", "")
-            author = obj.get("author", {}).get("name", "匿名")
-            voteup = obj.get("voteup_count", 0)
-            print(f"{count}. [文章] {title}")
-            print(f"   {truncate(desc)}")
-            print(f"   作者: {author}  赞同: {voteup}")
-            print(f"   https://zhuanlan.zhihu.com/p/{aid}")
-        elif obj_type == "question":
-            qid = obj.get("id", "")
-            answer_count = obj.get("answer_count", 0)
-            follower = obj.get("follower_count", 0)
-            print(f"{count}. [问题] {title}")
-            print(f"   {truncate(desc)}")
-            print(f"   回答: {answer_count}  关注: {follower}")
-            print(f"   https://www.zhihu.com/question/{qid}")
-        elif obj_type == "topic":
-            tid = obj.get("id", "")
-            print(f"{count}. [话题] {title}")
-            if desc:
-                print(f"   {truncate(desc)}")
-            print(f"   https://www.zhihu.com/topic/{tid}")
-        else:
-            print(f"{count}. [{obj_type or '其他'}] {title}")
-            if desc:
-                print(f"   {truncate(desc)}")
-        print()
     return True
 
 
 def cmd_search(keyword):
-    # Try Zhihu API first (if cookies available), fallback to DuckDuckGo
-    if os.path.exists(COOKIE_FILE) and _search_via_api(keyword):
+    # Try Sogou Zhihu search first, then DuckDuckGo
+    if _search_via_sogou(keyword):
         return
-    _search_via_duckduckgo(keyword)
+    if _search_via_duckduckgo(keyword):
+        return
+    print("未找到相关结果，请尝试其他关键词")
 
 
 # ── Hot List ────────────────────────────────────────────────────────────────
