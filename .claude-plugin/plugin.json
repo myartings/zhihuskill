@@ -1,0 +1,9 @@
+{
+  "name": "zhihu",
+  "version": "1.0.0",
+  "description": "知乎搜索助手：搜索问答/文章、查看热榜、阅读全文",
+  "author": { "name": "myartings" },
+  "repository": "https://github.com/myartings/zhihuskill",
+  "license": "MIT",
+  "keywords": ["zhihu", "知乎", "热榜"]
+}
