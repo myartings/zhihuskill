@@ -383,6 +383,77 @@ def cmd_import_cookies():
 
 # ── Search ──────────────────────────────────────────────────────────────────
 
+def _search_via_brave(keyword):
+    """Search zhihu content via Brave Search."""
+    query = urllib.parse.quote(f"{keyword} site:zhihu.com")
+    url = f"https://search.brave.com/search?q={query}"
+    req = urllib.request.Request(url, headers={
+        "User-Agent": HEADERS["User-Agent"],
+        "Accept": "text/html",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            page = resp.read().decode("utf-8", errors="replace")
+    except Exception:
+        return False
+
+    # Split page into result blocks (each starts with <div class="snippet ")
+    blocks = re.split(r'<div class="snippet\b[^"]*"[^>]*data-type="web"', page)
+
+    results = []
+    for block in blocks[1:]:  # skip content before first result
+        # Extract zhihu link
+        link_m = re.search(
+            r'href="(https?://(?:www\.|zhuanlan\.)?zhihu\.com/[^"]+)"', block)
+        if not link_m:
+            continue
+        link = link_m.group(1)
+
+        # Extract title from title="..." attribute on the title div
+        title_m = re.search(r'title="([^"]+)"', block)
+        title = html.unescape(title_m.group(1)).strip() if title_m else ""
+        title = re.sub(r'\s*-\s*知乎\s*$', '', title).strip()
+
+        # Extract snippet from content div
+        snip_m = re.search(r'class="content[^"]*">([^<]+)', block)
+        snippet = snip_m.group(1).strip() if snip_m else ""
+
+        if not title or len(title) < 4:
+            continue
+        results.append((link, title, snippet))
+
+    if not results:
+        return False
+
+    # Deduplicate by URL
+    seen = set()
+    unique = []
+    for link, title, snippet in results:
+        clean = link.split("?")[0].rstrip("/")
+        if clean not in seen:
+            seen.add(clean)
+            unique.append((link, title, snippet))
+
+    print(f"搜索「{keyword}」结果:\n")
+    for i, (link, title, snippet) in enumerate(unique[:15]):
+        if "zhuanlan.zhihu.com/p/" in link:
+            tag = "文章"
+        elif "/answer/" in link:
+            tag = "回答"
+        elif "/question/" in link:
+            tag = "问题"
+        else:
+            tag = "知乎"
+
+        print(f"{i + 1}. [{tag}] {title}")
+        if snippet:
+            print(f"   {truncate(snippet, 150)}")
+        print(f"   {link}")
+        print()
+    return True
+
+
 def _search_via_sogou(keyword):
     """Search zhihu content via Sogou Zhihu search."""
     query = urllib.parse.urlencode({"query": keyword, "ie": "utf8"})
@@ -498,7 +569,9 @@ def _search_via_duckduckgo(keyword):
 
 
 def cmd_search(keyword):
-    # Try Sogou Zhihu search first, then DuckDuckGo
+    # Try Brave Search first (most reliable), then Sogou, then DuckDuckGo
+    if _search_via_brave(keyword):
+        return
     if _search_via_sogou(keyword):
         return
     if _search_via_duckduckgo(keyword):
