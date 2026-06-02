@@ -34,7 +34,25 @@ import urllib.error
 import urllib.parse
 
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-COOKIE_FILE = os.path.join(SKILL_DIR, "cookies.json")
+
+def _find_cookie_file():
+    """Find cookies.json: env var > shared config > skill-local."""
+    # 1) Environment variable
+    env = os.environ.get("ZHIHU_COOKIE_FILE")
+    if env and os.path.isfile(env):
+        return env
+    # 2) Shared config path (~/.config/zhihu/cookies.json)
+    shared = os.path.join(os.path.expanduser("~"), ".config", "zhihu", "cookies.json")
+    if os.path.isfile(shared):
+        return shared
+    # 3) Skill-local fallback
+    local = os.path.join(SKILL_DIR, "cookies.json")
+    if os.path.isfile(local):
+        return local
+    # Return shared path as default (for import-cookies guidance)
+    return shared
+
+COOKIE_FILE = _find_cookie_file()
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -438,18 +456,19 @@ def check_error(r):
 
 def cmd_import_cookies():
     """Guide user to import cookies."""
+    shared = os.path.join(os.path.expanduser("~"), ".config", "zhihu", "cookies.json")
+    local = os.path.join(SKILL_DIR, "cookies.json")
     print("=== 导入知乎 Cookies ===\n")
     print("方法 1: 使用浏览器扩展 (推荐)")
     print("  1. 安装 'Cookie-Editor' 或 'EditThisCookie' 浏览器扩展")
     print("  2. 登录 zhihu.com")
     print("  3. 点击扩展图标 → Export (JSON 格式)")
-    print(f"  4. 将导出的 JSON 保存到: {COOKIE_FILE}")
+    print(f"  4. 将导出的 JSON 保存到: {shared}")
     print()
-    print("方法 2: 手动从 DevTools 导出")
-    print("  1. 登录 zhihu.com")
-    print("  2. 打开 DevTools (F12) → Application → Cookies")
-    print("  3. 复制所有 zhihu.com 的 cookies")
-    print(f"  4. 保存为 JSON 数组到: {COOKIE_FILE}")
+    print("Cookie 查找顺序:")
+    print(f"  1. 环境变量 ZHIHU_COOKIE_FILE")
+    print(f"  2. 共享路径 {shared} (推荐，所有 Agent 共用)")
+    print(f"  3. Skill 目录 {local}")
     print()
     print("JSON 格式示例:")
     print('[{"name": "z_c0", "value": "...", "domain": ".zhihu.com", "path": "/"}]')
