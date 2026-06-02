@@ -1,8 +1,9 @@
 ---
 name: zhihu
-description: |
-  知乎（Zhihu）搜索助手。通过 Python 命令搜索知乎：搜索问题/回答/文章、查看热榜、热搜词、查看用户、浏览话题、阅读全文、查看评论。
-  当用户提到知乎、Zhihu、知乎搜索、知乎热榜、看知乎、搜知乎、知乎上怎么说等关键词时使用。
+version: 0.2.0
+author: myartings
+license: MIT
+description: "知乎（Zhihu）搜索助手。通过 Python 命令搜索知乎：搜索问题/回答/文章、查看热榜、热搜词、查看用户、浏览话题、阅读全文、查看评论。当用户提到知乎、Zhihu、知乎热榜、搜知乎时使用。"
 ---
 
 # 规则
