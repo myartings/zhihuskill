@@ -800,12 +800,17 @@ def _print_answer(answer_id, r):
     voteup = r.get("voteup_count", 0)
     comment = r.get("comment_count", 0)
     content = strip_html(r.get("content", ""))
+    truncated = r.get("content_need_truncated", False)
 
     print(f"问题: {q_title}")
     print(f"作者: {author}  赞同: {voteup}  评论: {comment}")
     print(f"https://www.zhihu.com/question/{qid}/answer/{answer_id}")
     print("\n" + "=" * 60 + "\n")
     print(content)
+    if truncated:
+        print("\n" + "-" * 60)
+        print("注意: 以上为截断内容，完整回答需要登录 Cookie。")
+        print(f"请运行: python3 {__file__} import-cookies")
 
 
 def cmd_answer(answer_id):
@@ -856,12 +861,17 @@ def _print_article(article_id, r):
     voteup = r.get("voteup_count", 0)
     comment = r.get("comment_count", 0)
     content = strip_html(r.get("content", ""))
+    truncated = r.get("content_need_truncated", False)
 
     print(f"文章: {title}")
     print(f"作者: {author}  赞同: {voteup}  评论: {comment}")
     print(f"https://zhuanlan.zhihu.com/p/{article_id}")
     print("\n" + "=" * 60 + "\n")
     print(content)
+    if truncated:
+        print("\n" + "-" * 60)
+        print("注意: 以上为截断内容，完整文章需要登录 Cookie。")
+        print(f"请运行: python3 {__file__} import-cookies")
 
 
 def cmd_article(article_id):
