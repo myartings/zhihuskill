@@ -43,7 +43,15 @@ HEADERS = {
 }
 
 API_BASE = "https://www.zhihu.com/api/v4"
+MOBILE_API_BASE = "https://api.zhihu.com"
 ZSE_93 = "101_3_3.0"
+
+MOBILE_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+    "Accept": "application/json",
+    "Referer": "https://m.zhihu.com/",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+}
 
 # ── x-zse-96 Signature (SM4-based) ────────────────────────────────────────
 
@@ -319,6 +327,88 @@ def api(path, params=None, base=None):
     elif code == 403:
         return {"error": f"无权访问 (403)。请运行: python3 {__file__} import-cookies"}
     return result
+
+
+def mobile_api(path, params=None):
+    """Call mobile API (api.zhihu.com) which often works without signing."""
+    url = MOBILE_API_BASE + path
+    if params:
+        url += "?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url, headers=MOBILE_HEADERS)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode()[:300]
+        return {"error": f"HTTP {e.code}: {body}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def _fetch_page_html(url):
+    """Fetch a web page and return its HTML text, or None on failure."""
+    headers = {
+        "User-Agent": HEADERS["User-Agent"],
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Referer": "https://www.zhihu.com/",
+    }
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        opener = get_opener()
+        with opener.open(req, timeout=15) as resp:
+            return resp.read().decode("utf-8", errors="replace")
+    except Exception:
+        return None
+
+
+def _extract_initial_data(html):
+    """Extract __INITIAL_DATA__ JSON from zhihu page HTML."""
+    if not html:
+        return None
+    m = re.search(r'<script\s+id="js-initialData"\s*[^>]*>(.*?)</script>', html, re.DOTALL)
+    if not m:
+        m = re.search(r'window\.__INITIAL_DATA__\s*=\s*(\{.*?\})\s*;?\s*</script>', html, re.DOTALL)
+    if not m:
+        return None
+    try:
+        return json.loads(m.group(1))
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+
+def _answer_from_initial_data(data, answer_id):
+    """Extract answer content from __INITIAL_DATA__ structure."""
+    if not data:
+        return None
+    try:
+        # Path: initialState.entities.answers.{answer_id}
+        entities = data.get("initialState", {}).get("entities", {})
+        answers = entities.get("answers", {})
+        answer = answers.get(str(answer_id))
+        if answer and answer.get("content"):
+            return answer
+        # Also try numeric key
+        answer = answers.get(int(answer_id)) if not answer else answer
+        return answer if answer and answer.get("content") else None
+    except Exception:
+        return None
+
+
+def _article_from_initial_data(data, article_id):
+    """Extract article content from __INITIAL_DATA__ structure."""
+    if not data:
+        return None
+    try:
+        entities = data.get("initialState", {}).get("entities", {})
+        articles = entities.get("articles", {})
+        article = articles.get(str(article_id))
+        if article and article.get("content"):
+            return article
+        article = articles.get(int(article_id)) if not article else article
+        return article if article and article.get("content") else None
+    except Exception:
+        return None
 
 
 def strip_html(text):
@@ -672,12 +762,15 @@ def cmd_question(question_id):
     print(f"\nhttps://www.zhihu.com/question/{question_id}")
     print("\n" + "=" * 60)
 
-    # Get top answers
-    r2 = api(f"/questions/{question_id}/answers", {
+    # Get top answers (try v4 API, fallback to mobile API)
+    answer_params = {
         "include": "content,voteup_count,comment_count",
         "limit": 5,
         "sort_by": "default",
-    })
+    }
+    r2 = api(f"/questions/{question_id}/answers", answer_params)
+    if "error" in r2 or not r2.get("data"):
+        r2 = mobile_api(f"/questions/{question_id}/answers", answer_params)
     if "error" not in r2:
         answers = r2.get("data", [])
         if answers:
@@ -698,13 +791,8 @@ def cmd_question(question_id):
 
 # ── Full Answer ─────────────────────────────────────────────────────────────
 
-def cmd_answer(answer_id):
-    r = api(f"/answers/{answer_id}", {
-        "include": "content,voteup_count,comment_count,question",
-    })
-    if check_error(r):
-        return
-
+def _print_answer(answer_id, r):
+    """Print answer data in standard format."""
     question = r.get("question", {})
     q_title = question.get("title", "")
     qid = question.get("id", "")
@@ -720,13 +808,49 @@ def cmd_answer(answer_id):
     print(content)
 
 
-# ── Full Article ────────────────────────────────────────────────────────────
-
-def cmd_article(article_id):
-    r = api(f"/articles/{article_id}")
-    if check_error(r):
+def cmd_answer(answer_id):
+    # 1) Try v4 API
+    r = api(f"/answers/{answer_id}", {
+        "include": "content,voteup_count,comment_count,question",
+    })
+    if "error" not in r and r.get("content"):
+        _print_answer(answer_id, r)
         return
 
+    # 2) Try mobile API (api.zhihu.com, no signing needed)
+    mr = mobile_api(f"/answers/{answer_id}", {
+        "include": "content,voteup_count,comment_count,question",
+    })
+    if "error" not in mr and mr.get("content"):
+        _print_answer(answer_id, mr)
+        return
+
+    # 3) Try mobile page HTML (__INITIAL_DATA__)
+    qid = ""
+    for src in (r, mr):
+        qid = str(src.get("question", {}).get("id", "")) if "error" not in src else ""
+        if qid:
+            break
+    page_url = f"https://m.zhihu.com/question/{qid}/answer/{answer_id}" if qid else f"https://m.zhihu.com/answer/{answer_id}"
+    page_html = _fetch_page_html(page_url)
+    data = _extract_initial_data(page_html)
+    answer = _answer_from_initial_data(data, answer_id)
+    if answer and answer.get("content"):
+        _print_answer(answer_id, answer)
+        return
+
+    # All failed
+    err = r.get("error") or mr.get("error", "")
+    if err:
+        print(f"错误: {err}")
+    print("提示: 所有通道均失败，可能需要登录 Cookie。")
+    print(f"请运行: python3 {__file__} import-cookies")
+
+
+# ── Full Article ────────────────────────────────────────────────────────────
+
+def _print_article(article_id, r):
+    """Print article data in standard format."""
     title = r.get("title", "")
     author = r.get("author", {}).get("name", "匿名")
     voteup = r.get("voteup_count", 0)
@@ -738,6 +862,48 @@ def cmd_article(article_id):
     print(f"https://zhuanlan.zhihu.com/p/{article_id}")
     print("\n" + "=" * 60 + "\n")
     print(content)
+
+
+def cmd_article(article_id):
+    # 1) Try zhuanlan API (no signing needed)
+    zr = _do_request(f"https://zhuanlan.zhihu.com/api/articles/{article_id}", {
+        "User-Agent": HEADERS["User-Agent"],
+        "Accept": "application/json, text/plain, */*",
+        "Referer": f"https://zhuanlan.zhihu.com/p/{article_id}",
+    })
+    zr.pop("_code", None)
+    if "error" not in zr and zr.get("content"):
+        _print_article(article_id, zr)
+        return
+
+    # 2) Try v4 API
+    r = api(f"/articles/{article_id}")
+    if "error" not in r and r.get("content"):
+        _print_article(article_id, r)
+        return
+
+    # 3) Try mobile API
+    mr = mobile_api(f"/articles/{article_id}", {
+        "include": "content,voteup_count,comment_count",
+    })
+    if "error" not in mr and mr.get("content"):
+        _print_article(article_id, mr)
+        return
+
+    # 4) Try mobile page HTML (__INITIAL_DATA__)
+    page_html = _fetch_page_html(f"https://m.zhihu.com/p/{article_id}")
+    data = _extract_initial_data(page_html)
+    article = _article_from_initial_data(data, article_id)
+    if article and article.get("content"):
+        _print_article(article_id, article)
+        return
+
+    # All failed
+    err = zr.get("error") or r.get("error") or mr.get("error", "")
+    if err:
+        print(f"错误: {err}")
+    print("提示: 所有通道均失败，可能需要登录 Cookie。")
+    print(f"请运行: python3 {__file__} import-cookies")
 
 
 # ── User Profile ────────────────────────────────────────────────────────────
